@@ -16,6 +16,20 @@ _todo_service = TodoService()
 
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
+system_prompt = (
+    "You are a task assistant for an INTERNAL task system.\n"
+    "answer in the user's language.\n"
+    "You do NOT have internet access and must NOT call any web/search tools (e.g., brave_search).\n"
+    "You may ONLY call these tools: get_tasks, add_task, update_task, delete_task.\n"
+    "When calling tools, you MUST strictly follow the JSON schema.\n"
+    f"Allowed TaskType values: {[t.value for t in TaskType]}\n"
+    f"Allowed TaskStatus values: {[s.value for s in TaskStatus]}\n"
+    "If you are unsure about a field, ask the user for clarification instead of calling a tool.\n"
+)
+
+messages: List[Dict[str, Any]] = [
+    {"role": "system", "content": system_prompt},
+]
 
 def _call_function(name: str, arguments: Dict[str, Any]) -> Any:
     """
@@ -151,7 +165,7 @@ def _safe_json_loads(raw: Optional[str]) -> Dict[str, Any]:
     return json.loads(raw)
 
 
-def _retry_without_tools(messages: List[Dict[str, Any]]) -> str:
+def _retry_without_tools() -> str:
     """Force a normal assistant response without any tool calls."""
     followup = _groq_client.chat.completions.create(
         model=DEFAULT_MODEL,
@@ -166,7 +180,7 @@ def _allowed_tool_names(tools: List[Dict[str, Any]]) -> Set[str]:
     return {t["function"]["name"] for t in tools if t.get("type") == "function"}
 
 
-def choose_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Any:
+def choose_tools( tools: List[Dict[str, Any]]) -> Any:
     """Round 1: ask model (with tools enabled). Returns SDK message object."""
     response = _groq_client.chat.completions.create(
         model=DEFAULT_MODEL,
@@ -179,16 +193,15 @@ def choose_tools(messages: List[Dict[str, Any]], tools: List[Dict[str, Any]]) ->
 
 
 def call_tools(
-    messages: List[Dict[str, Any]],
     allowed_tools: Set[str],
     tool_calls: Any,
     *,
     assistant_content: str,
-) -> List[Dict[str, Any]]:
+) :
     """Execute tool calls and append assistant/tool messages. Always returns messages list."""
     tool_calls_list = tool_calls or []
     if not tool_calls_list:
-        return messages
+        return
 
     # Guard: refuse unknown tool types/names
     for tc in tool_calls_list:
@@ -199,7 +212,7 @@ def call_tools(
                     "content": "Tool calls are not available. Answer without tools.",
                 }
             )
-            return messages
+            return
         if tc.function.name not in allowed_tools:
             messages.append(
                 {
@@ -210,7 +223,7 @@ def call_tools(
                     ),
                 }
             )
-            return messages
+            return
 
     tool_messages: List[Dict[str, Any]] = []
     for tc in tool_calls_list:
@@ -253,34 +266,20 @@ def call_tools(
 
     messages.append(assistant_msg)
     messages.extend(tool_messages)
-    return messages
+    return 
 
 
 def agent(query: str) -> str:
-    system_prompt = (
-        "You are a task assistant for an INTERNAL task system.\n"
-        "You do NOT have internet access and must NOT call any web/search tools (e.g., brave_search).\n"
-        "You may ONLY call these tools: get_tasks, add_task, update_task, delete_task.\n"
-        "When calling tools, you MUST strictly follow the JSON schema.\n"
-        f"Allowed TaskType values: {[t.value for t in TaskType]}\n"
-        f"Allowed TaskStatus values: {[s.value for s in TaskStatus]}\n"
-        "If you are unsure about a field, ask the user for clarification instead of calling a tool.\n"
-    )
+    messages.append({"role": "user", "content": query})
 
-    tools = _build_tools()
+    tools = _build_tools()  
     allowed = _allowed_tool_names(tools)
-
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query},
-    ]
-
     # Round 1
     try:
-        first_message = choose_tools(messages, tools)
+        first_message = choose_tools(tools)
     except BadRequestError:
         # Most commonly tool validation failure; fallback to plain answer
-        return _retry_without_tools(messages)
+        return _retry_without_tools()
 
     tool_calls = getattr(first_message, "tool_calls", None) or []
     assistant_content = getattr(first_message, "content", "") or ""
@@ -290,8 +289,7 @@ def agent(query: str) -> str:
         return assistant_content
 
     # Execute tools
-    messages = call_tools(
-        messages,
+    call_tools(
         allowed,
         tool_calls,
         assistant_content=assistant_content,
