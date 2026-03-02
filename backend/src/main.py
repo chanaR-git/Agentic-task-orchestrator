@@ -1,11 +1,25 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import sys
 from .agent_service import agent
 
+
 app = FastAPI()
 
+origins = [
+    "http://localhost:5173", 
+    "http://127.0.0.1:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"],
+)
 
 class MessageRequest(BaseModel):
     message: str
@@ -17,8 +31,6 @@ async def handle_message(req: MessageRequest):
     result = agent(req.message)
     return {"response": result}
 
-
-# keep existing CLI entrypoint for compatibility
 
 def main():
     print("Task Manager System is starting...")
