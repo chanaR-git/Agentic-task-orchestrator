@@ -27,8 +27,10 @@ class MessageRequest(BaseModel):
 
 @app.post("/message")
 async def handle_message(req: MessageRequest):
-    #"""Receive a message from the client and forward it to the agent."""
+    """Receive a message from the client and forward it to the agent."""
+    print(f"DEBUG: Received message: {req.message}")
     result = agent(req.message)
+    # result = "בדיקה: השרת מגיב מהר!" 
     return {"response": result}
 
 
