@@ -16,20 +16,38 @@ _todo_service = TodoService()
 
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
-system_prompt = (
-    "You are a task assistant for an INTERNAL task system.\n"
-    "answer in the user's language.\n"
-    "You do NOT have internet access and must NOT call any web/search tools (e.g., brave_search).\n"
-    "You may ONLY call these tools: get_tasks, add_task, update_task, delete_task.\n"
-    "When calling tools, you MUST strictly follow the JSON schema.\n"
-    f"Allowed TaskType values: {[t.value for t in TaskType]}\n"
-    f"Allowed TaskStatus values: {[s.value for s in TaskStatus]}\n"
-    "If you are unsure about a field, ask the user for clarification instead of calling a tool.\n"
-)
+messages: List[Dict[str, Any]] = []
 
-messages: List[Dict[str, Any]] = [
-    {"role": "system", "content": system_prompt},
-]
+def get_dynamic_system_prompt() -> dict:
+    """
+    Injects the in-memory 'database' (TodoService) directly into the prompt.
+    This costs very few tokens but gives the agent 100% accurate memory of tasks.
+    """
+    tasks = _todo_service.get_tasks()
+    
+    # Format the tasks compactly to save tokens
+    task_lines = []
+    for t in tasks:
+        task_lines.append(f"- ID: {t.code} | Title: {t.title} | Status: {t.status.value}")
+    
+    tasks_text = "\n".join(task_lines) if task_lines else "No tasks currently exist."
+
+    prompt = (
+        "You are a task assistant for an INTERNAL task system.\n"
+        "You do NOT have internet access and must NOT call any web/search tools (e.g., brave_search).\n"
+        "You may ONLY call these tools: get_tasks, add_task, update_task, delete_task.\n"
+        "When calling tools, you MUST strictly follow the JSON schema, but don't show json to the user.\n"
+        f"Allowed TaskType values: {[t.value for t in TaskType]}\n"
+        f"Allowed TaskStatus values: {[s.value for s in TaskStatus]}\n"
+        "If you are unsure about a field, ask the user for clarification instead of calling a tool.\n"
+        "--- CURRENT SYSTEM STATE (SOURCE OF TRUTH) ---\n"
+        f"{tasks_text}\n"
+        "----------------------------------------------\n"
+        "If the user asks to modify a task, use the exact task_code from the list above."
+    )
+    
+    return {"role": "system", "content": prompt}
+
 
 def _call_function(name: str, arguments: Dict[str, Any]) -> Any:
     """
@@ -180,11 +198,11 @@ def _allowed_tool_names(tools: List[Dict[str, Any]]) -> Set[str]:
     return {t["function"]["name"] for t in tools if t.get("type") == "function"}
 
 
-def choose_tools( tools: List[Dict[str, Any]]) -> Any:
+def choose_tools( recent_context: List[Dict[str, Any]], tools: List[Dict[str, Any]]) -> Any:
     """Round 1: ask model (with tools enabled). Returns SDK message object."""
     response = _groq_client.chat.completions.create(
         model=DEFAULT_MODEL,
-        messages=messages,
+        messages=recent_context,
         tools=tools,
         tool_choice="auto",
         temperature=0,
@@ -268,15 +286,25 @@ def call_tools(
     messages.extend(tool_messages)
     return 
 
+def get_payload_messages() -> List[Dict[str, Any]]:
+    """Get the most recent messages to send as payload, including dynamic system prompt."""
+    recent_context = [
+        msg for msg in messages 
+        if msg["role"] in ["user", "assistant"] and not msg.get("tool_calls")
+    ][-4:]# Only include recent user/assistant messages without tool calls to save tokens; 
+          #the system prompt has the full state. 
+    payload_messages = [get_dynamic_system_prompt()] + recent_context
+    return payload_messages
 
 def agent(query: str) -> str:
-    messages.append({"role": "user", "content": query})
-
     tools = _build_tools()  
     allowed = _allowed_tool_names(tools)
+    
+    messages.append({"role": "user", "content": query})
+    
     # Round 1
     try:
-        first_message = choose_tools(tools)
+        first_message = choose_tools(get_payload_messages(), tools)
     except BadRequestError:
         # Most commonly tool validation failure; fallback to plain answer
         return _retry_without_tools()
@@ -303,7 +331,7 @@ def agent(query: str) -> str:
     try:
         followup = _groq_client.chat.completions.create(
             model=DEFAULT_MODEL,
-            messages=messages,
+            messages=get_payload_messages(),
             tool_choice="none",
             temperature=0,
         )
