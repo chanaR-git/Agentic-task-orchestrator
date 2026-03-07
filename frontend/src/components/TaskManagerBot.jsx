@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, List, Bot, Loader2 } from 'lucide-react';
+import { Send, List, Bot, Loader2, SquareCheckBigIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ChatMessage from './ChatMessage';
 
@@ -12,7 +12,6 @@ const TaskManagerBot = () => {
   const [isLoading, setIsLoading] = useState(false);
   const chatEndRef = useRef(null);
 
-  // גלילה אוטומטית לסוף הצ'אט
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
@@ -23,7 +22,6 @@ const TaskManagerBot = () => {
 
     const userMessage = input.trim();
     
-    // הוספת הודעת המשתמש למסך
     setMessages(prev => [...prev, { id: Date.now(), text: userMessage, sender: 'user' }]);
     setInput('');
     
@@ -45,16 +43,14 @@ const TaskManagerBot = () => {
       if (!response.ok) throw new Error('השרת החזיר שגיאה');
 
       const data = await response.json();
-
-      // עדכון הצ'אט עם התשובה מהסוכן (שדה response ב-JSON)
+      
       setMessages(prev => [...prev, { 
         id: Date.now(), 
         text: data.response, 
         sender: 'bot' 
       }]);
 
-      // הערה: אם הסוכן שלך מעדכן משימות, כדאי שה-API יחזיר גם את רשימת המשימות המעודכנת
-      // ובמקרה כזה נעדכן כאן: if(data.tasks) setTasks(data.tasks);
+      if(data.tasks) setTasks(data.tasks);
 
     } catch (error) {
       console.error("API Error:", error);
@@ -83,12 +79,13 @@ const TaskManagerBot = () => {
             <AnimatePresence>
               {tasks.map(task => (
                 <motion.div
-                  key={task.id}
+                  key={task.code}
                   initial={{ x: 20, opacity: 0 }}
                   animate={{ x: 0, opacity: 1 }}
                   className="p-3 mb-2 bg-gray-50 rounded-xl border border-gray-100"
                 >
-                  <span className="text-sm text-gray-700">{task.text}</span>
+                  <span className="text-sm text-gray-700">{task.title}</span>
+                  <SquareCheckBigIcon size={16} className="text-green-500 float-left" />
                 </motion.div>
               ))}
             </AnimatePresence>

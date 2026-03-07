@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import sys
-from .agent_service import agent
+from .agent_service import agent, _todo_service
 
 
 app = FastAPI()
@@ -30,8 +30,8 @@ async def handle_message(req: MessageRequest):
     """Receive a message from the client and forward it to the agent."""
     print(f"DEBUG: Received message: {req.message}")
     result = agent(req.message)
-    # result = "בדיקה: השרת מגיב מהר!" 
-    return {"response": result}
+    current_tasks = [t.to_dict() for t in _todo_service.get_tasks()]
+    return {"response": result, "tasks": current_tasks}
 
 
 def main():
