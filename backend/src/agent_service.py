@@ -16,14 +16,29 @@ _todo_service = TodoService()
 
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
-messages: List[Dict[str, Any]] = []
+sessions: Dict[str, List[Dict[str, Any]]] = {}
+todo_services: Dict[str, TodoService] = {}  # מסד נתונים נפרד לכל משתמש!
 
-def get_dynamic_system_prompt() -> dict:
+
+def get_session_messages(session_id: str) -> List[Dict[str, Any]]:
+    """Retrieves or initializes the message history for a specific user"""
+    if session_id not in sessions:
+        sessions[session_id] = []
+    return sessions[session_id]
+
+def get_todo_service(session_id: str) -> TodoService:
+    """שולף את מסד הנתונים הפרטי של המשתמש"""
+    if session_id not in todo_services:
+        todo_services[session_id] = TodoService()
+    return todo_services[session_id]
+   
+def get_dynamic_system_prompt(session_id:str) -> dict:
     """
     Injects the in-memory 'database' (TodoService) directly into the prompt.
     This costs very few tokens but gives the agent 100% accurate memory of tasks.
     """
-    tasks = _todo_service.get_tasks()
+    user_db = get_todo_service(session_id)
+    tasks = user_db.get_tasks()
     
     # Format the tasks compactly to save tokens
     task_lines = []
@@ -49,12 +64,12 @@ def get_dynamic_system_prompt() -> dict:
     return {"role": "system", "content": prompt}
 
 
-def _call_function(name: str, arguments: Dict[str, Any]) -> Any:
+def _call_function(name: str, arguments: Dict[str, Any], session_id: str) -> Any:
     """
     Executes an internal tool/function based on model tool-call request.
     Returns JSON-serializable result objects.
     """
-
+    user_db = get_todo_service(session_id) 
     def _convert_enum(value: Any, enum_cls, map_unknown: bool = False):
         if value is None:
             return None
@@ -71,7 +86,7 @@ def _call_function(name: str, arguments: Dict[str, Any]) -> Any:
             raise ValueError(f"invalid value for {enum_cls.__name__}: {value}")
 
     if name == "get_tasks":
-        return [t.to_dict() for t in _todo_service.get_tasks()]
+        return [t.to_dict() for t in user_db.get_tasks()]
 
     if name == "add_task":
         task_kwargs = arguments.copy()
@@ -84,7 +99,7 @@ def _call_function(name: str, arguments: Dict[str, Any]) -> Any:
         except Exception as err:
             return {"success": False, "error": str(err)}
 
-        _todo_service.add_task(task)
+        user_db.add_task(task)
         return {"success": True}
 
     if name == "update_task":
@@ -99,14 +114,14 @@ def _call_function(name: str, arguments: Dict[str, Any]) -> Any:
         except ValueError as err:
             return {"success": False, "error": str(err)}
 
-        result = _todo_service.update_task(code, **arguments)
+        result = user_db.update_task(code, **arguments)
         return {"success": result}
 
     if name == "delete_task":
         code = arguments.get("code")
         if not code:
             return {"success": False, "error": "code is required"}
-        result = _todo_service.delete_task(code)
+        result = user_db.delete_task(code)
         return {"success": result}
 
     raise ValueError(f"Unknown function: {name}")
@@ -183,11 +198,11 @@ def _safe_json_loads(raw: Optional[str]) -> Dict[str, Any]:
     return json.loads(raw)
 
 
-def _retry_without_tools() -> str:
+def _retry_without_tools(payload_messages: List[Dict[str, Any]]) -> str:
     """Force a normal assistant response without any tool calls."""
     followup = _groq_client.chat.completions.create(
         model=DEFAULT_MODEL,
-        messages=messages,
+        messages=payload_messages,
         tool_choice="none",
         temperature=0,
     )
@@ -211,8 +226,10 @@ def choose_tools( recent_context: List[Dict[str, Any]], tools: List[Dict[str, An
 
 
 def call_tools(
+    messages: List[Dict[str, Any]],
     allowed_tools: Set[str],
     tool_calls: Any,
+    session_id,
     *,
     assistant_content: str,
 ) :
@@ -254,7 +271,7 @@ def call_tools(
             result: Any = {"success": False, "error": f"Invalid JSON arguments: {exc}"}
         else:
             try:
-                result = _call_function(func_name, args)
+                result = _call_function(func_name, args, session_id)             
             except Exception as exc:
                 result = {"success": False, "error": f"Internal tool error: {exc}"}
 
@@ -286,17 +303,20 @@ def call_tools(
     messages.extend(tool_messages)
     return 
 
-def get_payload_messages() -> List[Dict[str, Any]]:
+def get_payload_messages(messages: List[Dict[str, Any]],session_id:str) -> List[Dict[str, Any]]:
     """Get the most recent messages to send as payload, including dynamic system prompt."""
     recent_context = [
         msg for msg in messages 
         if msg["role"] in ["user", "assistant"] and not msg.get("tool_calls")
     ][-4:]# Only include recent user/assistant messages without tool calls to save tokens; 
           #the system prompt has the full state. 
-    payload_messages = [get_dynamic_system_prompt()] + recent_context
+    payload_messages = [get_dynamic_system_prompt(session_id)] + recent_context
     return payload_messages
 
-def agent(query: str) -> str:
+def agent(query: str, session_id: str = "default") -> str:
+    
+    messages = get_session_messages(session_id)
+    
     tools = _build_tools()  
     allowed = _allowed_tool_names(tools)
     
@@ -304,10 +324,10 @@ def agent(query: str) -> str:
     
     # Round 1
     try:
-        first_message = choose_tools(get_payload_messages(), tools)
+        first_message = choose_tools(get_payload_messages(messages, session_id), tools)    
     except BadRequestError:
         # Most commonly tool validation failure; fallback to plain answer
-        return _retry_without_tools()
+        return _retry_without_tools(get_payload_messages(messages,session_id))
 
     tool_calls = getattr(first_message, "tool_calls", None) or []
     assistant_content = getattr(first_message, "content", "") or ""
@@ -318,20 +338,22 @@ def agent(query: str) -> str:
 
     # Execute tools
     call_tools(
+        messages,
         allowed,
         tool_calls,
+        session_id=session_id,
         assistant_content=assistant_content,
     )
 
     # If we refused tools (unsupported), just answer without tools
     if not any(m.get("role") == "tool" for m in messages):
-        return _retry_without_tools(messages)
+        return _retry_without_tools(get_payload_messages(messages,session_id))
 
     # Round 2 (force no tools)
     try:
         followup = _groq_client.chat.completions.create(
             model=DEFAULT_MODEL,
-            messages=get_payload_messages(),
+            messages=get_payload_messages(messages,session_id),
             tool_choice="none",
             temperature=0,
         )

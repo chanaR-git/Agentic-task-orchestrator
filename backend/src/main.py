@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import sys
-from src.agent_service import agent, _todo_service
+from src.agent_service import agent,get_todo_service
 
 
 app = FastAPI()
@@ -23,14 +23,15 @@ app.add_middleware(
 
 class MessageRequest(BaseModel):
     message: str
-
+    session_id: str = "default_session"
 
 @app.post("/message")
 async def handle_message(req: MessageRequest):
     """Receive a message from the client and forward it to the agent."""
-    print(f"DEBUG: Received message: {req.message}")
-    result = agent(req.message)
-    current_tasks = [t.to_dict() for t in _todo_service.get_tasks()]
+    print(f"DEBUG: Received message: {req.message}\n session {req.session_id}")
+    result = agent(req.message, req.session_id)
+    user_db = get_todo_service(req.session_id)
+    current_tasks = [t.to_dict() for t in user_db.get_tasks()]
     return {"response": result, "tasks": current_tasks}
 
 

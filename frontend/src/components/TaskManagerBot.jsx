@@ -4,6 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ChatMessage from './ChatMessage';
 
 const TaskManagerBot = () => {
+  
+  const [sessionId] = useState(() => Math.random().toString(36).substring(7));
+  
   const [messages, setMessages] = useState([
     { id: 1, text: "שלום! אני סוכן ניהול המשימות שלך. איך אוכל לעזור?", sender: 'bot' }
   ]);
@@ -30,18 +33,14 @@ const TaskManagerBot = () => {
   };
 
   const processCommand = async (command) => {
-    console.log("process command");
-    
     setIsLoading(true);
     try {
-      console.log("try");
-      
       const response = await fetch('http://localhost:8000/message', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: command }),
+        body: JSON.stringify({ message: command, session_id : sessionId}),
       });
       console.log(response);
       
