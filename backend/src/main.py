@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import sys
-from .agent_service import agent, _todo_service
+from src.agent_service import agent, _todo_service
 
 
 app = FastAPI()

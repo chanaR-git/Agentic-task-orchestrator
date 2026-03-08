@@ -30,8 +30,12 @@ const TaskManagerBot = () => {
   };
 
   const processCommand = async (command) => {
+    console.log("process command");
+    
     setIsLoading(true);
     try {
+      console.log("try");
+      
       const response = await fetch('http://localhost:8000/message', {
         method: 'POST',
         headers: {
@@ -39,7 +43,8 @@ const TaskManagerBot = () => {
         },
         body: JSON.stringify({ message: command }),
       });
-
+      console.log(response);
+      
       if (!response.ok) throw new Error('השרת החזיר שגיאה');
 
       const data = await response.json();
