@@ -54,7 +54,7 @@ def get_dynamic_system_prompt(session_id:str) -> dict:
         "When calling tools, you MUST strictly follow the JSON schema, but don't show json to the user.\n"
         f"Allowed TaskType values: {[t.value for t in TaskType]}\n"
         f"Allowed TaskStatus values: {[s.value for s in TaskStatus]}\n"
-        "If you are unsure about a field, ask the user for clarification instead of calling a tool.\n"
+        "If you are unsure about a field, complete details which makes sense.\n"
         "--- CURRENT SYSTEM STATE (SOURCE OF TRUTH) ---\n"
         f"{tasks_text}\n"
         "----------------------------------------------\n"
