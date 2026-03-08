@@ -1,4 +1,3 @@
-```markdown
 # 🤖 TaskBot Agent: LLM-Powered Task Orchestration
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
@@ -103,8 +102,6 @@ The AI operates autonomously using the following backend bindings:
 ```bash
 git clone https://github.com/yourusername/TaskBot-Agent.git
 cd TaskBot-Agent
-```
-
 ### 2. Backend Setup
 ```bash
 cd backend
